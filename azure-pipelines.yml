@@ -1,0 +1,111 @@
+name: Build Bicep
+
+stages:
+
+- stage: Build
+
+  pool:
+    vmImage: windows-latest
+
+  jobs:
+  - job: BuildJob
+
+    steps:
+
+    - task: AzureCLI@2
+      displayName : 'Build Bicep Files'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az bicep build --file main.bicep
+          
+    - task: CopyFiles@2
+      displayName : 'Copy Built Files'
+      inputs:
+        SourceFolder: '$(Build.SourcesDirectory)'
+        Contents: |
+          **\*.bicep
+          **\*.ps1
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: drop'
+      condition: succeededOrFailed()
+      inputs:
+        PathtoPublish: $(Build.ArtifactStagingDirectory)
+        TargetPath: '\\my\share\$(Build.DefinitionName)\$(Build.BuildNumber)'
+
+- stage: Deploy
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    
+  pool:
+    vmImage: windows-latest
+
+  jobs:
+  - job: Deploy
+  
+    steps:
+    - task: DownloadBuildArtifacts@1
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'drop'
+        downloadPath: '$(System.ArtifactsDirectory)'
+
+    - task: AzureCLI@2
+      displayName: 'Deploy Resource Group'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az --version
+          az group create --name RG-DIG-UKS-$(envUpp)-$(projectUpp) --location $(location)
+      timeoutInMinutes: 5
+      retryCountOnTaskFailure: 2
+
+    - task: AzureCLI@2
+      displayName: 'Tag Resource Group'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          $group= az group show -n DIG-UKS-$(envUpp)-$(projectUpp) --query id --output tsv
+          echo "group: $group"
+          az tag create --resource-id $group --tags "Owner=$(owner)" "Project=$(project)" "Cost Centre=$(costCode)"
+      timeoutInMinutes: 5
+
+    - task: AzureCLI@2
+      displayName: 'Deploy Resources'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: 'ps'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az deployment group create --resource-group DIG-UKS-$(envUpp)-$(projectUpp) --template-file $(Build.ArtifactStagingDirectory)\drop\main.bicep --parameters "busUnit=$(busUnit)" "reg=$(reg)" "env=$(env)" "project=$(project)" "owner=$(owner)" "costCode=$(costCode)"
+      timeoutInMinutes: 15
+      retryCountOnTaskFailure: 2
+
+    - task: AzureCLI@2
+      displayName: 'Add SQL to MI Security Group'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: ps
+        scriptLocation: inlineScript
+        inlineScript: |
+          #check if the user exists in the AAD Group, if not, add into it.
+          $isMember = az ad group member check --group $miSecGrp --member-id $targetUser | ConvertFrom-Json
+          if($isMember.Value -eq $False)
+          {
+            echo 'Adding to MI security group...'
+            az ad group member add --group $miSecGrp --member-id $targetUser
+            echo 'AD propagation delay...'
+            sleep 30
+          } Else {
+            echo 'Already a member'
+          }
+      timeoutInMinutes: 5
+      retryCountOnTaskFailure: 2
