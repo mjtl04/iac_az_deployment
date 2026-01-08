@@ -116,5 +116,5 @@ stages:
             echo 'Already a member'
           }
       timeoutInMinutes: 5
-
       retryCountOnTaskFailure: 2
+
