@@ -90,6 +90,14 @@ stages:
       retryCountOnTaskFailure: 2
 
     - task: AzureCLI@2
+      displayName: 'Enable Static Hosting'
+      inputs:
+        azureSubscription: 'DEVOPS-$(envUpp)-DIG'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: 'az storage blob service-properties update --account-name st$(project)static$(env) --static-website  --index-document index.html --404-document 404.html'
+
+    - task: AzureCLI@2
       displayName: 'Add SQL to MI Security Group'
       inputs:
         azureSubscription: 'DEVOPS-$(envUpp)-DIG'
@@ -108,4 +116,5 @@ stages:
             echo 'Already a member'
           }
       timeoutInMinutes: 5
+
       retryCountOnTaskFailure: 2
